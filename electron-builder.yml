@@ -13,6 +13,8 @@ files:
 extraResources:
   - from: CHANGELOG.md
     to: CHANGELOG.md
+  - from: resources/open-webui
+    to: open-webui
 asarUnpack:
   - resources/**
   - node_modules/node-pty/**

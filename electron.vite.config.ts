@@ -22,6 +22,7 @@ export default defineConfig({
     }
   },
   renderer: {
+    server: process.env.USE_LOCAL_CORE === 'true' ? { port: 5180, strictPort: true } : undefined,
     build: {
       rollupOptions: {
         input: {

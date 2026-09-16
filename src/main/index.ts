@@ -46,6 +46,9 @@ import {
   stopAllServers,
   uninstallPython,
   validateRemoteUrl,
+  isLocalCoreMode,
+  getLocalCoreUrl,
+  resolveOpenWebUIInstallSpec,
   type AppConfig,
   type Connection
 } from './utils'
@@ -926,9 +929,12 @@ const startServerHandler = async (): Promise<boolean> => {
 
     // Auto-update the open-webui pip package to latest before starting.
     // Only when autoUpdate is enabled (default) and no version pin is set.
+    // Skip when attaching to the sibling core or installing a bundled fork wheel —
+    // otherwise `uv pip install open-webui -U` would replace the fork with PyPI.
     const autoUpdate = CONFIG?.localServer?.autoUpdate !== false
     const versionPin = CONFIG?.localServer?.version
-    if (autoUpdate && !versionPin && isPackageInstalled('open-webui')) {
+    const skipPypiUpdate = isLocalCoreMode() || !!resolveOpenWebUIInstallSpec()
+    if (autoUpdate && !versionPin && !skipPypiUpdate && isPackageInstalled('open-webui')) {
       try {
         log.info('[server] Auto-updating open-webui package to latest…')
         sendToRenderer('status:install', 'Updating Open WebUI…')
@@ -955,7 +961,9 @@ const startServerHandler = async (): Promise<boolean> => {
     sendToRenderer('status:server', SERVER_STATUS)
 
     // Auto-push PTY port so an already-open log panel picks up live output
-    connectPtyPort(pid)
+    if (pid > 0) {
+      connectPtyPort(pid)
+    }
     updateTray()
 
     checkUrlAndOpen(SERVER_URL, async () => {
@@ -1198,6 +1206,13 @@ if (!gotTheLock) {
 
   app.whenReady().then(async () => {
     CONFIG = await getConfig()
+    if (isLocalCoreMode()) {
+      if (!CONFIG.defaultConnectionId) {
+        await setConfig({ defaultConnectionId: 'local' })
+        CONFIG = await getConfig()
+      }
+      log.info('USE_LOCAL_CORE: attaching to sibling Open WebUI at', getLocalCoreUrl())
+    }
     loadSpotlightPosition()
     log.info('Config:', CONFIG)
 

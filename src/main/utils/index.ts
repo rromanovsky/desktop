@@ -433,23 +433,87 @@ export const uninstallPython = (installationDir?: string): boolean => {
   return true
 }
 
+// ─── Local sibling core (AECP workbench) ────────────────
+// USE_LOCAL_CORE=true: Electron does not download Python / pip-install from
+// PyPI / spawn the packaged `open-webui serve`. The window attaches to the
+// sibling Vite+FastAPI processes (default http://127.0.0.1:5173).
+// Packaged macOS builds install a wheel from extraResources instead of PyPI.
+
+export const isLocalCoreMode = (): boolean => {
+  const value = process.env.USE_LOCAL_CORE
+  return value === '1' || value === 'true' || value === 'TRUE'
+}
+
+export const getLocalCoreUrl = (): string => {
+  return process.env.LOCAL_CORE_URL || 'http://127.0.0.1:5173'
+}
+
+const listWheels = (dir: string): string[] => {
+  if (!fs.existsSync(dir)) return []
+  try {
+    return fs
+      .readdirSync(dir)
+      .filter((name) => name.endsWith('.whl'))
+      .map((name) => path.join(dir, name))
+      .sort()
+  } catch {
+    return []
+  }
+}
+
+export const resolveOpenWebUIInstallSpec = (): string | null => {
+  if (process.env.OPEN_WEBUI_SOURCE) {
+    return process.env.OPEN_WEBUI_SOURCE
+  }
+  const resourceDirs: string[] = []
+  try {
+    if (app.isPackaged) {
+      resourceDirs.push(path.join(process.resourcesPath, 'open-webui'))
+    }
+  } catch {}
+  resourceDirs.push(path.join(getAppPath(), 'resources', 'open-webui'))
+  for (const dir of resourceDirs) {
+    const wheels = listWheels(dir)
+    if (wheels.length > 0) {
+      return wheels[wheels.length - 1]
+    }
+  }
+  return null
+}
+
+export const usesForkedOpenWebUI = (): boolean => {
+  return isLocalCoreMode() || !!resolveOpenWebUIInstallSpec()
+}
+
 // ─── Package Management ─────────────────────────────────
 
 export const installPackage = (packageName: string, version?: string, onStatus?: (status: string) => void): Promise<boolean> => {
   return new Promise((resolve, reject) => {
+    if (packageName === 'open-webui' && isLocalCoreMode()) {
+      onStatus?.('Using sibling Open WebUI (USE_LOCAL_CORE)')
+      log.info('Skipping pip install; USE_LOCAL_CORE attaches to the sibling core')
+      return resolve(true)
+    }
     if (!isPythonInstalled()) {
       return reject(new Error('Python is not installed. Please reinstall the app or run setup again.'))
     }
     const pythonPath = getPythonPath()
+    const localSpec = packageName === 'open-webui' ? resolveOpenWebUIInstallSpec() : null
+    if (localSpec) {
+      onStatus?.(`Installing Open WebUI from ${localSpec}`)
+      log.info('Installing Open WebUI from local spec:', localSpec)
+    }
     const commandProcess = execFile(
       pythonPath,
-      [
-        '-m',
-        'uv',
-        'pip',
-        'install',
-        ...(version ? [`${packageName}==${version}`] : [packageName, '-U'])
-      ],
+      localSpec
+        ? ['-m', 'uv', 'pip', 'install', localSpec]
+        : [
+            '-m',
+            'uv',
+            'pip',
+            'install',
+            ...(version ? [`${packageName}==${version}`] : [packageName, '-U'])
+          ],
       {
         env: pythonEnv()
       }
@@ -501,6 +565,9 @@ export const installPackages = async (
 }
 
 export const isPackageInstalled = (packageName: string): boolean => {
+  if (packageName === 'open-webui' && isLocalCoreMode()) {
+    return true
+  }
   const pythonPath = getPythonPath()
   if (!fs.existsSync(pythonPath)) return false
   try {
@@ -515,6 +582,9 @@ export const isPackageInstalled = (packageName: string): boolean => {
 }
 
 export const getPackageVersion = (packageName: string): string | null => {
+  if (packageName === 'open-webui' && isLocalCoreMode()) {
+    return process.env.LOCAL_CORE_VERSION || 'local'
+  }
   const pythonPath = getPythonPath()
   if (!fs.existsSync(pythonPath)) return null
   try {
@@ -561,6 +631,11 @@ export const startServer = async (
   port = null
 ): Promise<{ url: string; pid: number }> => {
   await stopAllServers()
+  if (isLocalCoreMode()) {
+    const url = getLocalCoreUrl()
+    log.info(`USE_LOCAL_CORE: skip packaged open-webui spawn, attach ${url}`)
+    return { url, pid: -1 }
+  }
   const config = await getConfig()
   const configEnvVars = config.envVars ?? {}
   const host = expose ? '0.0.0.0' : '127.0.0.1'
