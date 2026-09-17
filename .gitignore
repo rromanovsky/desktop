@@ -7,3 +7,6 @@ out
 .eslintcache
 *.log*
 *.tsbuildinfo
+
+# Bundled fork wheel from pnpm workbench:build / build:custom — do not commit
+resources/open-webui/*.whl
